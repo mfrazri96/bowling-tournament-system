@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Strike Zone Selector</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body class="bg-gradient-to-br from-blue-900 via-purple-900 to-blue-800 min-h-screen">
+    <div id="app"></div>
+
+    <script>
+        const SUPABASE_URL = 'YOUR SUPABASE URL';
+        const SUPABASE_KEY = 'YOUR SUPABASE KEY';
+        
+        const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+        const app = {
+            name: '',
+            assignedLane: null,
+            loading: false,
+            message: '',
+            showAdmin: false,
+            allAssignments: [],
+            loadingAdmin: false,
+
+            async init() {
+                this.render();
+            },
+
+            async assignLane() {
+                if (!this.name.trim()) {
+                    this.message = 'Please enter your name';
+                    this.render();
+                    return;
+                }
+
+                this.loading = true;
+                this.message = '';
+                this.render();
+
+                try {
+                    const normalizedName = this.name.trim().toLowerCase();
+
+                    const { data: existing } = await supabase
+                        .from('lane_assignments')
+                        .select('*')
+                        .ilike('name', normalizedName)
+                        .single();
+
+                    if (existing) {
+                        this.assignedLane = existing.lane;
+                        this.message = `Welcome back! You're still on Lane ${existing.lane}`;
+                        this.loading = false;
+                        this.render();
+                        return;
+                    }
+
+                    const { data: assignments } = await supabase
+                        .from('lane_assignments')
+                        .select('*');
+
+                    const laneCounts = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 };
+                    (assignments || []).forEach(a => {
+                        if (laneCounts[a.lane] !== undefined) {
+                            laneCounts[a.lane]++;
+                        }
+                    });
+
+                    const laneCapacities = { 1: 4, 2: 4, 3: 4, 4: 4, 5: 4, 6: 4 };
+
+                    const availableLanes = [];
+                    for (let lane = 1; lane <= 6; lane++) {
+                        if (laneCounts[lane] < laneCapacities[lane]) {
+                            availableLanes.push(lane);
+                        }
+                    }
+
+                    if (availableLanes.length === 0) {
+                        this.message = 'Sorry, all lanes are full!';
+                        this.loading = false;
+                        this.render();
+                        return;
+                    }
+
+                    const randomLane = availableLanes[Math.floor(Math.random() * availableLanes.length)];
+
+                    await supabase
+                        .from('lane_assignments')
+                        .insert([{ name: this.name.trim(), lane: randomLane }]);
+
+                    this.assignedLane = randomLane;
+                    this.message = '';
+                } catch (error) {
+                    console.error('Error:', error);
+                    this.message = 'Error assigning lane. Please try again.';
+                } finally {
+                    this.loading = false;
+                    this.render();
+                }
+            },
+
+            async loadAdminView() {
+                this.loadingAdmin = true;
+                this.render();
+
+                const { data: assignments } = await supabase
+                    .from('lane_assignments')
+                    .select('*')
+                    .order('lane', { ascending: true });
+
+                this.allAssignments = assignments || [];
+                this.loadingAdmin = false;
+                this.render();
+            },
+
+            toggleAdminView() {
+                this.showAdmin = !this.showAdmin;
+                if (this.showAdmin) {
+                    this.loadAdminView();
+                } else {
+                    this.render();
+                }
+            },
+
+            groupByLane() {
+                const grouped = { 1: [], 2: [], 3: [], 4: [], 5: [], 6: [] };
+                this.allAssignments.forEach(a => {
+                    if (grouped[a.lane]) {
+                        grouped[a.lane].push(a);
+                    }
+                });
+                return grouped;
+            },
+
+            getLeaderboard() {
+                return this.allAssignments
+                    .filter(a => typeof a.score === "number" && !isNaN(a.score))
+                    .slice()
+                    .sort((a, b) => b.score - a.score)
+                    .slice(0, 6);
+            },
+
+             async saveScores() {
+    const inputs = document.querySelectorAll(".score-input");
+    const updates = [];
+
+    inputs.forEach(input => {
+        const id = input.dataset.id;
+        const value = input.value.trim();
+        if (!id) return;
+        if (value === "") return; // nothing entered for this player
+
+        const current = Number(input.dataset.current || "0");
+        const addThisGame = Number(value);
+
+        if (!Number.isNaN(addThisGame)) {
+            const newTotal = current + addThisGame;
+            updates.push({ id, score: newTotal });
+        }
+    });
+
+    if (updates.length === 0) {
+        this.message = "No scores to save";
+        this.render();
+        return;
+    }
+
+    this.loadingAdmin = true;
+    this.render();
+
+    try {
+        for (const u of updates) {
+            const { error } = await supabase
+                .from("lane_assignments")
+                .update({ score: u.score })
+                .eq("id", u.id);
+
+            if (error) {
+                console.error("Update error for id", u.id, error);
+                throw error;
+            }
+        }
+
+        this.message = "Scores updated successfully!";
+        await this.loadAdminView();
+        return;
+    } catch (err) {
+        console.error("Save scores error:", err);
+        this.message = "Error saving scores. Please try again.";
+    } finally {
+        this.loadingAdmin = false;
+        this.render();
+    }
+},
+
+
+            render() {
+                const appDiv = document.getElementById('app');
+                
+                if (this.showAdmin) {
+                    appDiv.innerHTML = this.renderAdminView();
+                } else {
+                    appDiv.innerHTML = this.renderMainView();
+                }
+
+                this.attachEventListeners();
+            },
+
+            renderAdminView() {
+                const grouped = this.groupByLane();
+                const totalPeople = this.allAssignments.length;
+                const top6 = this.getLeaderboard();
+
+                return `
+                    <div class="flex items-center justify-center min-h-screen p-4">
+                        <div class="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-3xl">
+                            <div class="flex items-center justify-between mb-6">
+                                <div class="flex items-center gap-3">
+                                    <svg class="w-8 h-8 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"/>
+                                    </svg>
+                                    <h1 class="text-3xl font-bold text-gray-800">Live scores and groups</h1>
+                                </div>
+                                <button onclick="app.toggleAdminView()" class="flex items-center gap-2 px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded-lg transition">
+                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"/>
+                                    </svg>
+                                    Back
+                                </button>
+                            </div>
+
+                            <div class="mb-4 bg-blue-50 p-4 rounded-lg">
+                                <p class="text-center text-lg font-semibold text-blue-900">
+                                    Total participants: ${totalPeople}
+                                </p>
+                                <p class="text-center text-sm text-blue-700 mt-1">
+                                    Awards go to the top six scorers overall, across all lanes
+                                </p>
+                            </div>
+
+                            <div class="mb-6 bg-purple-50 border border-purple-100 rounded-lg p-4">
+                                <h2 class="text-xl font-bold text-purple-900 mb-3">🏆 Top six leaderboard</h2>
+                                ${top6.length === 0 ? `
+                                    <p class="text-sm text-purple-700 italic">Scores will appear here once they are entered.</p>
+                                ` : `
+                                    <div class="space-y-2">
+                                        ${top6.map((p, index) => {
+                                            const medals = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣', '6️⃣'];
+                                            return `
+                                                <div class="flex items-center justify-between bg-white rounded-md px-3 py-2 shadow-sm">
+                                                    <div class="flex items-center gap-3">
+                                                        <span class="w-8 text-center text-2xl">
+                                                            ${medals[index]}
+                                                        </span>
+                                                        <div>
+                                                            <p class="font-semibold text-gray-800">${p.name}</p>
+                                                            <p class="text-xs text-gray-500">Lane ${p.lane}</p>
+                                                        </div>
+                                                    </div>
+                                                    <div class="text-right">
+                                                        <p class="text-lg font-bold text-gray-900">${p.score ?? 0}</p>
+                                                        <p class="text-xs text-gray-500">Total score</p>
+                                                    </div>
+                                                </div>
+                                            `;
+                                        }).join("")}
+                                    </div>
+                                `}
+                            </div>
+
+                            ${this.message ? `
+                                <div class="mb-4 p-3 rounded-lg text-center ${
+                                    this.message.includes('Error') || this.message.includes('No scores')
+                                        ? 'bg-red-100 text-red-700' 
+                                        : 'bg-green-100 text-green-700'
+                                }">
+                                    ${this.message}
+                                </div>
+                            ` : ''}
+
+                            ${this.loadingAdmin ? `
+    <div class="flex justify-center py-8">
+        <div class="animate-spin rounded-full h-10 w-10 border-b-2 border-purple-600"></div>
+    </div>
+` : `
+    <div class="grid md:grid-cols-2 gap-4">
+        ${Object.keys(grouped).map(lane => `
+            <div class="border-2 border-gray-200 rounded-lg p-4">
+                <div class="flex items-center justify-between mb-3">
+                    <h3 class="text-xl font-bold text-gray-800">Lane ${lane}</h3>
+                    <span class="bg-purple-100 text-purple-700 px-3 py-1 rounded-full text-sm font-semibold">
+                        ${grouped[lane].length}
+                    </span>
+                </div>
+                ${grouped[lane].length > 0 ? `
+                    <div class="space-y-2">
+                        ${grouped[lane].map((p, idx) => `
+                            <div class="bg-gray-50 px-3 py-2 rounded flex items-center justify-between gap-2">
+                                <div class="text-sm">
+                                    <div>${idx + 1}. ${p.name}</div>
+                                    <div class="text-[11px] text-gray-500">
+                                        Current total: ${p.score ?? 0}
+                                    </div>
+                                </div>
+                                <input
+                                    type="number"
+                                    class="score-input w-24 px-2 py-1 border border-gray-300 rounded text-xs text-right"
+                                    placeholder="This game"
+                                    value=""
+                                    data-id="${p.id}"
+                                    data-current="${p.score ?? 0}"
+                                    min="0"
+                                    max="300"
+                                />
+                            </div>
+                        `).join("")}
+                    </div>
+                ` : `
+                    <p class="text-gray-400 italic">No players in this lane yet</p>
+                `}
+            </div>
+        `).join("")}
+    </div>
+
+    <button id="saveScoresBtn" class="w-full mt-6 bg-purple-600 text-white py-3 rounded-lg hover:bg-purple-700 transition font-semibold">
+        💾 Save scores
+    </button>
+`}
+
+                        </div>
+                    </div>
+                `;
+            },
+
+            renderMainView() {
+                return `
+                    <div class="flex items-center justify-center min-h-screen p-4">
+                        <div class="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-md relative">
+                            <button onclick="app.toggleAdminView()" class="absolute top-4 right-4 p-2 text-purple-600 hover:bg-purple-50 rounded-lg transition flex items-center gap-2">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
+                                </svg>
+                                <span class="text-sm">Scores and groups</span>
+                            </button>
+
+                            <div class="text-center mb-8">
+                                <div class="text-6xl mb-4">🎳</div>
+                                <h1 class="text-3xl font-bold text-gray-800 mb-2">Strike Zone Selector</h1>
+                                <p class="text-gray-600 text-sm">Enter your name to get your lane assignment</p>
+                            </div>
+
+                            ${!this.assignedLane ? `
+                                <div class="space-y-6">
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-700 mb-2">Your Name</label>
+                                        <input
+                                            type="text"
+                                            id="nameInput"
+                                            value="${this.name}"
+                                            placeholder="Enter your name"
+                                            class="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none transition"
+                                            ${this.loading ? 'disabled' : ''}
+                                        />
+                                    </div>
+
+                                    <button
+                                        onclick="app.assignLane()"
+                                        ${this.loading ? 'disabled' : ''}
+                                        class="w-full bg-gradient-to-r from-purple-600 to-blue-600 text-white font-semibold py-4 rounded-lg hover:from-purple-700 hover:to-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all transform hover:scale-105 active:scale-95 shadow-lg"
+                                    >
+                                        ${this.loading ? `
+                                            <span class="flex items-center justify-center">
+                                                <div class="animate-spin rounded-full h-5 w-5 border-b-2 border-white mr-2"></div>
+                                                Assigning...
+                                            </span>
+                                        ` : 'Pick My Lane'}
+                                    </button>
+
+                                    ${this.message ? `
+                                        <div class="p-4 rounded-lg text-center ${
+                                            this.message.includes('full') 
+                                                ? 'bg-red-100 text-red-700' 
+                                                : 'bg-blue-100 text-blue-700'
+                                        }">
+                                            ${this.message}
+                                        </div>
+                                    ` : ''}
+                                </div>
+                            ` : `
+                                <div class="text-center space-y-6">
+                                    <div class="bg-gradient-to-br from-green-400 to-blue-500 rounded-2xl p-8 shadow-lg">
+                                        <div class="text-white">
+                                            <p class="text-lg font-medium mb-2">You're assigned to</p>
+                                            <div class="text-7xl font-bold mb-2">${this.assignedLane}</div>
+                                            <p class="text-2xl font-semibold">Lane ${this.assignedLane}</p>
+                                        </div>
+                                    </div>
+
+                                    ${this.message ? `
+                                        <div class="bg-blue-100 text-blue-700 p-3 rounded-lg text-sm">
+                                            ${this.message}
+                                        </div>
+                                    ` : ''}
+
+                                    <div class="pt-4">
+                                        <p class="text-gray-600 text-sm mb-4">Have fun bowling! 🎉</p>
+                                        <button onclick="app.reset()" class="text-purple-600 hover:text-purple-700 font-medium text-sm">
+                                            Check another name
+                                        </button>
+                                    </div>
+                                </div>
+                            `}
+
+                            <div class="mt-8 pt-6 border-t border-gray-200">
+                                <div class="text-xs text-gray-500 space-y-1">
+                                    <p class="font-semibold text-gray-700 mb-2">🎁 Awards Info:</p>
+                                    <p>Top 6 highest scorers across ALL lanes will receive awards!</p>
+                                    <p class="text-gray-400 mt-2">Each lane: Maximum 4 people</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            },
+
+            attachEventListeners() {
+                const nameInput = document.getElementById('nameInput');
+                if (nameInput) {
+                    nameInput.addEventListener('input', (e) => {
+                        this.name = e.target.value;
+                    });
+                    nameInput.addEventListener('keypress', (e) => {
+                        if (e.key === 'Enter') {
+                            this.assignLane();
+                        }
+                    });
+                }
+                const saveBtn = document.getElementById('saveScoresBtn');
+                if (saveBtn) {
+                    saveBtn.addEventListener('click', () => {
+                        this.saveScores();
+                    });
+                }
+            },
+
+            reset() {
+                this.assignedLane = null;
+                this.name = '';
+                this.message = '';
+                this.render();
+            }
+        };
+
+        app.init();
+    </script>
+</body>
+</html>
