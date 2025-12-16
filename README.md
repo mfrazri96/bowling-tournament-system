@@ -1,4 +1,4 @@
-# bowling-tournament-system
+# Bowling-Tournament-System
 A web based bowling tournament system that assigns lanes automatically, tracks live scores, and ranks players across multiple games.
 
 🎳 Strike Zone Selector
