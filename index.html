@@ -14,9 +14,9 @@
         const SUPABASE_URL = 'YOUR SUPABASE URL';
         const SUPABASE_KEY = 'YOUR SUPABASE KEY';
         
-        const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+        const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
-        const app = {
+        window.app = {
             name: '',
             assignedLane: null,
             loading: false,
@@ -43,7 +43,7 @@
                 try {
                     const normalizedName = this.name.trim().toLowerCase();
 
-                    const { data: existing } = await supabase
+                    const { data: existing } = await supabaseClient
                         .from('lane_assignments')
                         .select('*')
                         .ilike('name', normalizedName)
@@ -57,7 +57,7 @@
                         return;
                     }
 
-                    const { data: assignments } = await supabase
+                    const { data: assignments } = await supabaseClient
                         .from('lane_assignments')
                         .select('*');
 
@@ -86,7 +86,7 @@
 
                     const randomLane = availableLanes[Math.floor(Math.random() * availableLanes.length)];
 
-                    await supabase
+                    await supabaseClient
                         .from('lane_assignments')
                         .insert([{ name: this.name.trim(), lane: randomLane }]);
 
@@ -105,7 +105,7 @@
                 this.loadingAdmin = true;
                 this.render();
 
-                const { data: assignments } = await supabase
+                const { data: assignments } = await supabaseClient
                     .from('lane_assignments')
                     .select('*')
                     .order('lane', { ascending: true });
@@ -172,7 +172,7 @@
 
     try {
         for (const u of updates) {
-            const { error } = await supabase
+            const { error } = await supabaseClient
                 .from("lane_assignments")
                 .update({ score: u.score })
                 .eq("id", u.id);
@@ -454,7 +454,7 @@
             }
         };
 
-        app.init();
+        window.app.init();
     </script>
 </body>
 </html>
